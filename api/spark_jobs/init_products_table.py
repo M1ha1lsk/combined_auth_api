@@ -25,7 +25,6 @@ def main():
             ("6ba7b811-9dad-11d1-80b4-00c04fd430c8", "AirPods Pro", "Wireless earbuds", "Accessories", 249.99, 2),
         ]
 
-        # Создаем DataFrame
         df = spark.createDataFrame(data, [
             "product_id", "product_name", "product_description", "category", "price", "seller_id"
         ])

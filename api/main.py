@@ -9,7 +9,7 @@ import json
 import subprocess
 from uuid import UUID
 import uuid
-from kafka_producer import send_purchase
+from api.utils.kafka_producer import send_purchase
 
 app = FastAPI()
 
@@ -29,8 +29,13 @@ class AddProductRequest(BaseModel):
     category: str
     price: float
 
+class UpdateProductRequest(BaseModel):
+    product_id: str
+    product_name: str
+    price: float
+
 @app.post("/init-products")
-def init_products():
+async def init_products():
     result = subprocess.run(
         [
             "docker", "exec", "spark-master",
@@ -49,7 +54,7 @@ def init_products():
     }
 
 @app.get("/products")
-def get_products():
+async def get_products():
     try:
         result = subprocess.run([
             "docker", "exec", "spark-master",
@@ -221,4 +226,103 @@ async def add_product(
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
+        )
+    
+@app.post("/update_product")
+async def update_product(
+    update_data: UpdateProductRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    session_token = request.cookies.get("session_token")
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Session token missing")
+    
+    user_id = verify_session(session_token, db)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
+    role_response = await get_user_role(request, db)
+    if role_response["role"] != "seller":
+        raise HTTPException(status_code=403, detail="Only sellers can update products")
+
+    try:
+        product_check = subprocess.run([
+            "docker", "exec", "spark-master",
+            "spark-submit",
+            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+            "/app/spark_jobs/get_product.py",
+            update_data.product_id
+        ], capture_output=True, text=True, timeout=60)
+
+        if product_check.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch product: {product_check.stderr}"
+            )
+
+        try:
+            product = json.loads(product_check.stdout)
+            if not product:
+                raise HTTPException(status_code=404, detail="Product not found")
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid product data format from Spark"
+            )
+
+        if str(product["seller_id"]) != str(user_id):
+            raise HTTPException(
+                status_code=403,
+                detail="You can only update your own products"
+            )
+
+        update_payload = {
+            "product_id": update_data.product_id,
+            "product_name": update_data.product_name,
+            "price": update_data.price,
+            "seller_id": user_id
+        }
+
+        spark_update = subprocess.run([
+            "docker", "exec", "spark-master",
+            "spark-submit",
+            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+            "/app/spark_jobs/update_product.py",
+            json.dumps(update_payload)
+        ], capture_output=True, text=True, timeout=60)
+
+        if spark_update.returncode != 0:
+            error_msg = spark_update.stderr
+            try:
+                error_json = json.loads(spark_update.stderr)
+                error_msg = error_json.get("message", error_msg)
+            except:
+                pass
+            
+            raise HTTPException(
+                status_code=500,
+                detail=f"Update failed: {error_msg}"
+            )
+
+        return {
+            "status": "success",
+            "product_id": update_data.product_id,
+            "updated_fields": {
+                "product_name": update_data.product_name,
+                "price": update_data.price
+            }
+        }
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail="Spark job timed out"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
         )
