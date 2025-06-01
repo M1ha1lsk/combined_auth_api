@@ -12,9 +12,6 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime, timedelta
 import uuid
-import secrets
-import requests
-import json
 
 app = FastAPI()
 
@@ -45,7 +42,7 @@ async def startup():
 @app.post("/register/")
 async def register_user(request: RegisterUserRequest, db: Session = Depends(get_db)):
     hashed_password = pwd_context.hash(request.user_password)
-    expected_role = ['admin', 'seller', 'customer']
+    expected_role = ['seller', 'customer']
     new_user = User(user_login=request.user_login, user_password=hashed_password, user_role=request.user_role)
     if request.user_role not in expected_role:
         raise HTTPException(status_code=400, detail="Invalid role. It must be one of 'admin', 'seller' or 'customer'")

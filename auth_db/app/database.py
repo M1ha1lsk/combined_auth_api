@@ -26,12 +26,18 @@ def get_db():
 def init_db(db: Session):
     admin_user = db.query(models.User).filter(models.User.user_login == "admin").first()
     if not admin_user:
-        admin = models.User(
-            user_login="admin",
-            user_role="admin",
-            user_password=pwd_context.hash("admin_pwd")
+        customer = models.User(
+            user_login="a",
+            user_role="customer",
+            user_password=pwd_context.hash("a")
         )
-        db.add(admin)
+        seller = models.User(
+            user_login="b",
+            user_role="seller",
+            user_password=pwd_context.hash("b")
+        )
+        db.add(customer)
+        db.add(seller)
         db.commit()
 
 def get_user_by_login(db: Session, user_login: str):
