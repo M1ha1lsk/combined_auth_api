@@ -3,6 +3,7 @@ from pyspark.sql.types import StructType, StructField, StringType, FloatType, In
 import sys
 import json
 import traceback
+import os
 from datetime import datetime
 
 try:
@@ -16,10 +17,10 @@ try:
         .appName("AddProduct") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog") \
         .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
-        .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg-warehouse/") \
+        .config("spark.sql.catalog.spark_catalog.warehouse", f"s3a://{os.getenv('MINIO_BUCKET_NAME')}/") \
         .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.access.key", os.getenv('MINIO_ROOT_USER')) \
+        .config("spark.hadoop.fs.s3a.secret.key", os.getenv('MINIO_ROOT_PASSWORD')) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()

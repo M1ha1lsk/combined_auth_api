@@ -2,6 +2,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, FloatType, IntegerType, TimestampType
 from pyspark.sql.functions import current_timestamp
 import sys
+import os
 
 def main():
     try:
@@ -9,10 +10,10 @@ def main():
             .appName("CreateIcebergTable") \
             .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog") \
             .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
-            .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg-warehouse/") \
+            .config("spark.sql.catalog.spark_catalog.warehouse", f"s3a://{os.getenv('MINIO_BUCKET_NAME')}/") \
             .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-            .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-            .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+            .config("spark.hadoop.fs.s3a.access.key", os.getenv('MINIO_ROOT_USER')) \
+            .config("spark.hadoop.fs.s3a.secret.key", os.getenv('MINIO_ROOT_PASSWORD')) \
             .config("spark.hadoop.fs.s3a.path.style.access", "true") \
             .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
             .getOrCreate()

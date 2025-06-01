@@ -1,10 +1,9 @@
 version: '3.8'
 
 services:
-  db:
+  auth-db:
     image: postgres:13
     container_name: auth_db
-    restart: always
     environment:
       POSTGRES_USER: auth_user
       POSTGRES_PASSWORD: auth_password
@@ -12,145 +11,159 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - auth_postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
 
   minio:
-    image: minio/minio:RELEASE.2023-10-25T06-33-25Z
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
     container_name: minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.1
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD-SHELL", "echo stat | nc localhost 2181 | grep Mode || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.1
     ports:
-      - "9092:9092"
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - app-network
+
+  minio-init:
+    image: minio/mc:latest
     depends_on:
-      zookeeper:
-        condition: service_started
+      minio:
+        condition: service_healthy
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-    healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
+    command: >
+      /bin/sh -c "
+      until mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do
+        echo 'Waiting for MinIO...';
+        sleep 1;
+      done;
+      mc mb myminio/$${MINIO_BUCKET_NAME} || true;
+      mc policy set public myminio/$${MINIO_BUCKET_NAME};
+      "
+    networks:
+      - app-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.11
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_USER: clickhouse_user
+      CLICKHOUSE_PASSWORD: clickhouse_password
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "8123:8123"
+      - "9009:9000"
+    networks:
+      - app-network
 
   spark-master:
-    image: bitnami/spark:3.4
+    image: bitnami/spark:3.5
     container_name: spark-master
     environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
+      SPARK_MODE: master
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
     ports:
       - "7077:7077"
       - "8080:8080"
     volumes:
       - ./api/spark_jobs:/app/spark_jobs
-      - ./api/spark_jobs/jars:/opt/bitnami/spark/extra-jars
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080 || exit 1"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+      - ./spark-batch/jars:/opt/bitnami/spark/extra-jars
+    networks:
+      - app-network
 
   spark-worker:
-    image: bitnami/spark:3.4
+    image: bitnami/spark:3.5
     container_name: spark-worker
     depends_on:
-      spark-master:
-        condition: service_started
+      - spark-master
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_WORKER_CORES=1
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
     volumes:
       - ./api/spark_jobs:/app/spark_jobs
-      - ./api/spark_jobs/jars:/opt/bitnami/spark/extra-jars
-    restart: on-failure
+      - ./spark-batch/jars:/opt/bitnami/spark/extra-jars
+    networks:
+      - app-network
 
-  service:
-    build: .
-    container_name: combined_service
-    restart: unless-stopped
+  auth-api:
+    build:
+      context: ./auth_db
+      dockerfile: Dockerfile
+    container_name: auth_api
     depends_on:
-      db:
-        condition: service_healthy
-      kafka:
-        condition: service_started
-      minio:
-        condition: service_started
-      spark-master:
-        condition: service_started
+      - auth-db
     environment:
-      DATABASE_URL: postgresql://auth_user:auth_password@db:5432/auth_db
-      PYTHONUNBUFFERED: 1
-      PYTHONPATH: /app
-      WAIT_FOR_SERVICES: "true"
-    command: >
-      sh -c "
-      if [ \"$WAIT_FOR_SERVICES\" = \"true\" ]; then
-        echo 'Waiting for dependencies...';
-        while ! nc -z db 5432; do sleep 1; done;
-        while ! nc -z kafka 9092; do sleep 1; done;
-        while ! nc -z minio 9000; do sleep 1; done;
-        while ! nc -z spark-master 7077; do sleep 1; done;
-      fi;
-      echo 'Running migrations...';
-      cd /app/auth_db && alembic upgrade head;
-      echo 'Starting services...';
-      uvicorn auth_db.app.main:app --host 0.0.0.0 --port 8000 &
-      cd /app/api && ./entrypoint.sh uvicorn main:app --host 0.0.0.0 --port 8001
-      "
+      DATABASE_URL: postgresql://auth_user:auth_password@auth-db:5432/auth_db
     ports:
       - "8000:8000"
+    volumes:
+      - ./auth_db:/app
+    networks:
+      - app-network
+
+  combined-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: combined_api
+    depends_on:
+      - auth-db
+      - minio
+      - spark-master
+    environment:
+      DATABASE_URL: postgresql://auth_user:auth_password@auth-db:5432/auth_db
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
+    ports:
       - "8001:8001"
     volumes:
-      - ./auth_db:/app/auth_db
-      - ./api:/app/api
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./api:/app
+    networks:
+      - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/docs || exit 1"]
+      test: ["CMD", "curl", "-f", "http://minio:9000/minio/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
 
+  spark-batch:
+    build:
+      context: ./spark-batch
+      dockerfile: Dockerfile
+    container_name: spark-batch
+    depends_on:
+      - spark-master
+      - clickhouse
+    environment:
+      SPARK_MASTER_URL: spark://spark-master:7077
+      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/default
+      CLICKHOUSE_USER: clickhouse_user
+      CLICKHOUSE_PASSWORD: clickhouse_password
+    volumes:
+      - ./spark-batch:/app
+    networks:
+      - app-network
+
 volumes:
-  postgres_data:
+  auth_postgres_data:
   minio_data:
+  clickhouse_data:
+
+networks:
+  app-network:
+    driver: bridge
