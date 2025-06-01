@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y docker-ce-cli \
     && apt-get clean
 
-ENV PYTHONPATH="${PYTHONPATH}:/app/auth_db"
 WORKDIR /app/api
 
 COPY requirements.txt .

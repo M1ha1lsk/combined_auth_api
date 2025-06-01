@@ -129,6 +129,21 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+      WAIT_FOR_SERVICES: "true"
+    command: >
+      sh -c "
+      if [ \"$WAIT_FOR_SERVICES\" = \"true\" ]; then
+        echo 'Waiting for dependencies...';
+        while ! nc -z auth-db 5432; do sleep 1; done;
+        while ! nc -z kafka 9092; do sleep 1; done;
+        while ! nc -z minio 9000; do sleep 1; done;
+        while ! nc -z spark-master 7077; do sleep 1; done;
+      fi;
+      echo 'Starting combined API...';
+      ./entrypoint.sh uvicorn main:app --host 0.0.0.0 --port 8001
+      "
     ports:
       - "8001:8001"
     volumes:
