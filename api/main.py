@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
 import subprocess
+from datetime import datetime
 from uuid import UUID
 import uuid
 from api.utils.kafka_producer import send_purchase
@@ -40,7 +41,9 @@ async def init_products():
         [
             "docker", "exec", "spark-master",
             "spark-submit",
-            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/init_products_table.py"
         ],
         capture_output=True,
@@ -57,9 +60,11 @@ async def init_products():
 async def get_products():
     try:
         result = subprocess.run([
-            "docker", "exec", "spark-master",
+           "docker", "exec", "spark-master",
             "spark-submit",
-            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/list_products.py"
         ], capture_output=True, text=True, timeout=30)
 
@@ -112,7 +117,9 @@ async def create_purchase(
     result = subprocess.run([
         "docker", "exec", "spark-master",
         "spark-submit",
-        "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
         "/app/spark_jobs/list_products.py"
     ], capture_output=True, text=True)
 
@@ -192,7 +199,9 @@ async def add_product(
         result = subprocess.run([
             "docker", "exec", "spark-master",
             "spark-submit",
-            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
+            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/add_product.py",
             json.dumps(product_data)
         ], capture_output=True, text=True, timeout=30)
@@ -227,102 +236,110 @@ async def add_product(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
-    
+
 @app.post("/update_product")
 async def update_product(
     update_data: UpdateProductRequest,
     request: Request,
     db: Session = Depends(get_db)
 ):
-    session_token = request.cookies.get("session_token")
-    if not session_token:
-        raise HTTPException(status_code=401, detail="Session token missing")
-    
-    user_id = verify_session(session_token, db)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid session token")
-
     role_response = await get_user_role(request, db)
     if role_response["role"] != "seller":
         raise HTTPException(status_code=403, detail="Only sellers can update products")
 
+    session_token = request.cookies.get("session_token")
+    user_id = verify_session(session_token, db)
+
+    result = subprocess.run([
+        "docker", "exec", "spark-master",
+        "spark-submit",
+        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
+        "/app/spark_jobs/list_products.py"
+    ], capture_output=True, text=True, timeout=30)
+
+    if result.returncode != 0:
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "step": "list_products",
+            "stderr": result.stderr,
+            "stdout": result.stdout
+        })
+
     try:
-        product_check = subprocess.run([
-            "docker", "exec", "spark-master",
-            "spark-submit",
-            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
-            "/app/spark_jobs/get_product.py",
-            update_data.product_id
-        ], capture_output=True, text=True, timeout=60)
-
-        if product_check.returncode != 0:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch product: {product_check.stderr}"
-            )
-
-        try:
-            product = json.loads(product_check.stdout)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found")
-        except json.JSONDecodeError:
-            raise HTTPException(
-                status_code=500,
-                detail="Invalid product data format from Spark"
-            )
-
-        if str(product["seller_id"]) != str(user_id):
-            raise HTTPException(
-                status_code=403,
-                detail="You can only update your own products"
-            )
-
-        update_payload = {
-            "product_id": update_data.product_id,
-            "product_name": update_data.product_name,
-            "price": update_data.price,
-            "seller_id": user_id
-        }
-
-        spark_update = subprocess.run([
-            "docker", "exec", "spark-master",
-            "spark-submit",
-            "--packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3",
-            "/app/spark_jobs/update_product.py",
-            json.dumps(update_payload)
-        ], capture_output=True, text=True, timeout=60)
-
-        if spark_update.returncode != 0:
-            error_msg = spark_update.stderr
-            try:
-                error_json = json.loads(spark_update.stderr)
-                error_msg = error_json.get("message", error_msg)
-            except:
-                pass
-            
-            raise HTTPException(
-                status_code=500,
-                detail=f"Update failed: {error_msg}"
-            )
-
-        return {
-            "status": "success",
-            "product_id": update_data.product_id,
-            "updated_fields": {
-                "product_name": update_data.product_name,
-                "price": update_data.price
-            }
-        }
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=504,
-            detail="Spark job timed out"
-        )
-    except HTTPException:
-        raise
+        products = json.loads("\n".join([
+            line for line in result.stdout.splitlines()
+            if line.strip().startswith(('{', '['))
+        ]))
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error: {str(e)}"
-        )
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "step": "parse_list_products_output",
+            "error": str(e),
+            "raw_output": result.stdout
+        })
+
+    product = next((p for p in products if p["product_id"] == update_data.product_id), None)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product["seller_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only update your own products")
+
+    updated_product = {
+        "product_id": update_data.product_id,
+        "product_name": update_data.product_name,
+        "price": update_data.price,
+        "product_description": product.get("product_description", ""),
+        "category": product.get("category", ""),
+        "seller_id": product.get("seller_id", user_id),
+        "created_at": product.get("created_at"),
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+    try:
+        update_payload = json.dumps(updated_product)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "step": "json_dumps_updated_product",
+            "error": str(e),
+            "product_data": str(updated_product)
+        })
+
+    # 4. Передаём в Spark джоб обновления
+    spark_update = subprocess.run([
+        "docker", "exec", "spark-master",
+        "spark-submit",
+        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
+        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
+        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
+        "/app/spark_jobs/update_product.py",
+        update_payload
+    ], capture_output=True, text=True, timeout=30)
+
+    if spark_update.returncode != 0:
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "step": "update_product",
+            "stderr": spark_update.stderr,
+            "stdout": spark_update.stdout,
+            "payload": update_payload
+        })
+
+    try:
+        spark_output = json.loads(spark_update.stdout)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "step": "parse_update_product_output",
+            "error": str(e),
+            "raw_output": spark_update.stdout
+        })
+
+    return {
+        "status": "ok",
+        "updated_product": updated_product,
+        "spark_output": spark_output
+    }
