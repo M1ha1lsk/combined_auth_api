@@ -174,7 +174,7 @@ async def add_product(
     db: Session = Depends(get_db)
 ):
     role_response = await get_user_role(request, db)
-    if role_response["role"] not in ["seller", "admin"]:
+    if role_response["role"] not in ["seller"]:
         raise HTTPException(status_code=403, detail="Only sellers and admins can add products")
 
     session_token = request.cookies.get("session_token")
@@ -196,7 +196,7 @@ async def add_product(
             "spark-submit",
             "/app/spark_jobs/add_product.py",
             json.dumps(product_data)
-        ], capture_output=True, text=True, timeout=30)
+        ], capture_output=True, text=True, timeout=50)
 
         output_lines = result.stdout.splitlines()
         json_response = None

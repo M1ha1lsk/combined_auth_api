@@ -28,4 +28,4 @@ RUN chmod +x entrypoint.sh && \
 
 EXPOSE 8000 8001
 
-CMD ["sh", "-c", "cd auth_db && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 & cd /app/api && ./entrypoint.sh uvicorn main:app --host 0.0.0.0 --port 8001"]
+CMD ["sh", "-c", "cd auth_db && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 & cd /app/api && ./entrypoint.sh && uvicorn main:app --host 0.0.0.0 --port 8001"]
