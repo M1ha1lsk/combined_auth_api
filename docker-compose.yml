@@ -5,15 +5,15 @@ services:
     image: postgres:13
     container_name: auth_db
     environment:
-      POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: auth_password
-      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${POSTGRES_USER1}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD1}
+      POSTGRES_DB: ${POSTGRES_DB1}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER1} -d ${POSTGRES_DB1}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -25,8 +25,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -74,10 +74,12 @@ services:
       - SPARK_SQL_EXTENSIONS=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
       - SPARK_SQL_CATALOG_SPARK_CATALOG=org.apache.iceberg.spark.SparkCatalog
       - SPARK_SQL_CATALOG_SPARK_CATALOG_TYPE=hadoop
-      - SPARK_SQL_CATALOG_SPARK_CATALOG_WAREHOUSE=s3a://iceberg-warehouse/
+      - SPARK_SQL_CATALOG_SPARK_CATALOG_WAREHOUSE=s3a://${MINIO_BUCKET_NAME}/
       - SPARK_HADOOP_FS_S3A_ENDPOINT=http://minio:9000
-      - SPARK_HADOOP_FS_S3A_ACCESS_KEY=minioadmin
-      - SPARK_HADOOP_FS_S3A_SECRET_KEY=minioadmin
+      - SPARK_HADOOP_FS_S3A_ACCESS_KEY=${MINIO_ROOT_USER}
+      - SPARK_HADOOP_FS_S3A_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     ports:
       - "7077:7077"
       - "8080:8080"
@@ -121,10 +123,10 @@ services:
       spark-master:
         condition: service_started
     environment:
-      DATABASE_URL: postgresql://auth_user:auth_password@db:5432/auth_db
+      DATABASE_URL: ${DATABASE_URL}
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
     ports:
       - "8000:8000"
       - "8001:8001"

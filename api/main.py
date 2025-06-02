@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi import Request, HTTPException, Depends
 from auth_db.app.database import verify_session, get_db
-from auth_db.app.main import get_user_role, check_session
+from auth_db.app.main import get_user_role
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
@@ -10,7 +10,8 @@ import subprocess
 from datetime import datetime
 from uuid import UUID
 import uuid
-from api.utils.kafka_producer import send_purchase
+from utils.kafka_producer import send_purchase
+
 
 app = FastAPI()
 
@@ -23,6 +24,7 @@ class Purchase(BaseModel):
 
 class PurchaseRequest(BaseModel):
     product_id: str
+    quantity: int
 
 class AddProductRequest(BaseModel):
     product_name: str
@@ -41,9 +43,6 @@ async def init_products():
         [
             "docker", "exec", "spark-master",
             "spark-submit",
-            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/init_products_table.py"
         ],
         capture_output=True,
@@ -62,9 +61,6 @@ async def get_products():
         result = subprocess.run([
            "docker", "exec", "spark-master",
             "spark-submit",
-            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/list_products.py"
         ], capture_output=True, text=True, timeout=30)
 
@@ -117,9 +113,6 @@ async def create_purchase(
     result = subprocess.run([
         "docker", "exec", "spark-master",
         "spark-submit",
-        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
         "/app/spark_jobs/list_products.py"
     ], capture_output=True, text=True)
 
@@ -158,7 +151,8 @@ async def create_purchase(
         "product_id": p.product_id,
         "sell_id": sell_id,
         "price": product_info["price"],
-        "seller_id": product_info["seller_id"]
+        "seller_id": product_info["seller_id"],
+        "quantity": p.quantity
     }
 
     send_purchase(purchase_data)
@@ -169,7 +163,8 @@ async def create_purchase(
         "product_id": p.product_id,
         "sell_id": sell_id,
         "price": product_info["price"],
-        "seller_id": product_info["seller_id"]
+        "seller_id": product_info["seller_id"],
+        "quantity": p.quantity
     }
 
 @app.post("/add_product")
@@ -199,9 +194,6 @@ async def add_product(
         result = subprocess.run([
             "docker", "exec", "spark-master",
             "spark-submit",
-            "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-            "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-            "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
             "/app/spark_jobs/add_product.py",
             json.dumps(product_data)
         ], capture_output=True, text=True, timeout=30)
@@ -253,9 +245,6 @@ async def update_product(
     result = subprocess.run([
         "docker", "exec", "spark-master",
         "spark-submit",
-        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
         "/app/spark_jobs/list_products.py"
     ], capture_output=True, text=True, timeout=30)
 
@@ -308,13 +297,9 @@ async def update_product(
             "product_data": str(updated_product)
         })
 
-    # 4. Передаём в Spark джоб обновления
     spark_update = subprocess.run([
         "docker", "exec", "spark-master",
         "spark-submit",
-        "--conf", "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog",
-        "--conf", "spark.sql.catalog.spark_catalog.type=hadoop",
-        "--conf", "spark.sql.catalog.spark_catalog.warehouse=s3a://iceberg-warehouse/",
         "/app/spark_jobs/update_product.py",
         update_payload
     ], capture_output=True, text=True, timeout=30)

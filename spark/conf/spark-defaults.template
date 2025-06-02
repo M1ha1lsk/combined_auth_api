@@ -1,8 +1,9 @@
 spark.sql.extensions org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
 spark.sql.catalog.spark_catalog org.apache.iceberg.spark.SparkCatalog
 spark.sql.catalog.spark_catalog.type hadoop
-spark.sql.catalog.spark_catalog.warehouse s3a://iceberg/
+spark.sql.catalog.spark_catalog.warehouse s3a://${MINIO_BUCKET_NAME}/
+
 spark.hadoop.fs.s3a.endpoint http://minio:9000
-spark.hadoop.fs.s3a.access.key admin
-spark.hadoop.fs.s3a.secret.key password123
+spark.hadoop.fs.s3a.access.key ${MINIO_ROOT_USER}
+spark.hadoop.fs.s3a.secret.key ${MINIO_ROOT_PASSWORD}
 spark.hadoop.fs.s3a.path.style.access true

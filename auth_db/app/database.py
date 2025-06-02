@@ -6,9 +6,10 @@ from typing import Optional
 from passlib.context import CryptContext
 from . import models
 from .models import Session as UserSession
+import os
 from sqlalchemy.orm import Session
 
-DATABASE_URL = "postgresql://auth_user:auth_password@db:5432/auth_db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
@@ -24,8 +25,7 @@ def get_db():
         db.close()
 
 def init_db(db: Session):
-    admin_user = db.query(models.User).filter(models.User.user_login == "admin").first()
-    if not admin_user:
+    if not db.query(models.User).filter_by(user_login='a').first():
         customer = models.User(
             user_login="a",
             user_role="customer",

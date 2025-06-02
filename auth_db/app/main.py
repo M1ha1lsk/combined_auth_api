@@ -6,7 +6,7 @@ from kafka import KafkaProducer
 from passlib.context import CryptContext
 from .models import User, Session as UserSession
 from typing import Literal
-from . import models, database
+from . import database, models
 from .database import get_db, verify_session
 from pydantic import BaseModel
 from uuid import UUID

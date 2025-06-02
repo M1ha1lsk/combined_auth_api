@@ -3,9 +3,18 @@ from pyspark.sql.types import StructType, StructField, StringType, FloatType, In
 import sys
 import json
 import traceback
+import os
+from dotenv import load_dotenv
+from pathlib import Path
 from datetime import datetime
 
 try:
+    env_path = Path(__file__).resolve().parents[2] / '.env'
+    load_dotenv(dotenv_path=env_path)
+    minio_user = os.getenv("MINIO_ROOT_USER", "admin")
+    minio_password = os.getenv("MINIO_ROOT_PASSWORD", "password123")
+    bucket_name = os.getenv("MINIO_BUCKET_NAME", "iceberg")
+    
     if len(sys.argv) < 2:
         print("ERROR: Необходимо передать JSON с данными продукта", file=sys.stderr)
         sys.exit(1)
@@ -16,10 +25,10 @@ try:
         .appName("AddProduct") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog") \
         .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
-        .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg-warehouse/") \
+        .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg/") \
         .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.access.key", minio_user) \
+        .config("spark.hadoop.fs.s3a.secret.key", minio_password) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()

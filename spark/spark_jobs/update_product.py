@@ -1,7 +1,10 @@
 from pyspark.sql import SparkSession
 import sys
 import json
+import os
 import time
+from dotenv import load_dotenv
+from pathlib import Path
 from datetime import datetime
 
 def check_minio_availability(spark):
@@ -20,6 +23,12 @@ def check_minio_availability(spark):
         return False
 
 def main():
+    env_path = Path(__file__).resolve().parents[2] / '.env'
+    load_dotenv(dotenv_path=env_path)
+    minio_user = os.getenv("MINIO_ROOT_USER", "admin")
+    minio_password = os.getenv("MINIO_ROOT_PASSWORD", "password123")
+    bucket_name = os.getenv("MINIO_BUCKET_NAME", "iceberg")
+
     start_time = time.time()
     if len(sys.argv) < 2:
         print(json.dumps({
@@ -39,10 +48,10 @@ def main():
             .appName("UpdateProduct") \
             .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog") \
             .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
-            .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg-warehouse/") \
+            .config("spark.sql.catalog.spark_catalog.warehouse", "s3a://iceberg") \
             .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-            .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-            .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+            .config("spark.hadoop.fs.s3a.access.key", minio_user) \
+            .config("spark.hadoop.fs.s3a.secret.key", minio_password) \
             .config("spark.hadoop.fs.s3a.path.style.access", "true") \
             .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
             .config("spark.hadoop.fs.s3a.connection.timeout", "30000") \
